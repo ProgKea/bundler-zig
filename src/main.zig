@@ -116,12 +116,10 @@ pub const Bundler = struct {
 
     pub fn bundle(self: *Bundler, path: []const u8) !void {
         const stat = try fs.cwd().statFile(path);
-        if (stat.kind == fs.File.Kind.directory) {
-            try self.bundleDirectory(path);
-        } else if (stat.kind == fs.File.Kind.file) {
-            try self.addEntry(path);
-        } else {
-            stderr.print("Cannot boundle file of type: {s}\n", .{@tagName(stat.kind)}) catch {};
+        switch (stat.kind) {
+            fs.File.Kind.directory => try self.bundleDirectory(path),
+            fs.File.Kind.file => try self.addEntry(path),
+            else => stderr.print("Cannot boundle file of type: {s}\n", .{@tagName(stat.kind)}) catch {},
         }
     }
 
