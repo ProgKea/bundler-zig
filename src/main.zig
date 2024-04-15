@@ -25,14 +25,19 @@ pub fn validCIdentFromStr(allocator: Allocator, str: []const u8) ![]u8 {
     return result;
 }
 
-pub const Bundler = struct {
-    const Entry = struct {
-        path: []const u8,
-        content: []const u8,
-    };
+fn readEntireFile(path: []const u8, allocator: Allocator) ![]u8 {
+    const file = try fs.cwd().openFile(path, .{});
+    defer file.close();
 
+    const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    errdefer allocator.free(content);
+
+    return content;
+}
+
+pub const Bundler = struct {
     allocator: Allocator,
-    entries: std.ArrayList(Entry),
+    paths: std.ArrayList([]const u8),
 
     const boiler_plate_top =
         \\#include <string.h>
@@ -49,7 +54,7 @@ pub const Bundler = struct {
     ;
 
     pub fn init(allocator: Allocator) Bundler {
-        return Bundler{ .allocator = allocator, .entries = std.ArrayList(Entry).init(allocator) };
+        return Bundler{ .allocator = allocator, .paths = std.ArrayList([]const u8).init(allocator) };
     }
 
     pub fn deinit(self: Bundler) void {
@@ -57,20 +62,15 @@ pub const Bundler = struct {
     }
 
     pub fn addEntry(self: *Bundler, path: []const u8) !void {
-        const file = try fs.cwd().openFile(path, .{});
-        defer file.close();
-
-        // TODO: Maybe its not a good idea to load all files into memory
-        const content = try file.readToEndAlloc(self.allocator, std.math.maxInt(usize));
-        try self.entries.append(.{ .path = path, .content = content });
+        try self.paths.append(path);
     }
 
-    fn dumpEntry(allocator: Allocator, writer: Writer, entry: Entry, first: bool) !void {
+    fn dumpEntry(allocator: Allocator, writer: Writer, entry: []const u8, first: bool) !void {
         const keyword = if (first) "if" else "else if";
-        try writer.print("  {s}(strcmp(path, \"{s}\") == 0)\n", .{ keyword, entry.path });
+        try writer.print("  {s}(strcmp(path, \"{s}\") == 0)\n", .{ keyword, entry });
         try writer.print("  {{\n", .{});
 
-        const cIdent = try validCIdentFromStr(allocator, entry.path);
+        const cIdent = try validCIdentFromStr(allocator, entry);
         defer allocator.free(cIdent);
 
         try writer.print("    result = {s}_content;\n", .{cIdent});
@@ -78,13 +78,17 @@ pub const Bundler = struct {
         try writer.print("  }}\n", .{});
     }
 
-    fn dumpEntryVars(allocator: Allocator, writer: Writer, entries: std.ArrayList(Entry)) !void {
+    fn dumpEntryVars(allocator: Allocator, writer: Writer, entries: std.ArrayList([]const u8)) !void {
         for (entries.items) |entry| {
-            const cIdent = try validCIdentFromStr(allocator, entry.path);
+            const cIdent = try validCIdentFromStr(allocator, entry);
             defer allocator.free(cIdent);
-            try writer.print("#define {s}_count {}\n", .{ cIdent, entry.content.len });
+
+            const content = try readEntireFile(entry, allocator);
+            defer allocator.free(content);
+
+            try writer.print("#define {s}_count {}\n", .{ cIdent, content.len });
             try writer.print("const char {s}_content[{s}_count] = {{", .{ cIdent, cIdent });
-            for (entry.content) |char| {
+            for (content) |char| {
                 try writer.print("0x{X},", .{char});
             }
             try writer.print("}};\n", .{});
@@ -124,16 +128,16 @@ pub const Bundler = struct {
     }
 
     pub fn dump(self: Bundler, writer: Writer) !void {
-        if (self.entries.items.len == 0) {
+        if (self.paths.items.len == 0) {
             return;
         }
 
-        try dumpEntryVars(self.allocator, writer, self.entries);
+        try dumpEntryVars(self.allocator, writer, self.paths);
         try writer.print("\n", .{});
         try writer.print("{s}\n", .{boiler_plate_top});
-        try dumpEntry(self.allocator, writer, self.entries.items[0], true);
-        if (self.entries.items.len > 1) {
-            const rest = self.entries.items[1..];
+        try dumpEntry(self.allocator, writer, self.paths.items[0], true);
+        if (self.paths.items.len > 1) {
+            const rest = self.paths.items[1..];
             for (rest) |entry| {
                 try dumpEntry(self.allocator, writer, entry, false);
             }
