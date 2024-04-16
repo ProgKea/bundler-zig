@@ -80,6 +80,10 @@ pub const Bundler = struct {
 
     fn dumpEntryVars(allocator: Allocator, writer: Writer, entries: std.ArrayList([]const u8)) !void {
         for (entries.items) |entry| {
+            if (entry.len == 0) {
+                continue;
+            }
+
             const cIdent = try validCIdentFromStr(allocator, entry);
             defer allocator.free(cIdent);
 
@@ -110,7 +114,6 @@ pub const Bundler = struct {
             }
 
             const full_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ path, entry.path });
-            defer self.allocator.free(full_path);
             self.addEntry(full_path) catch |err| {
                 stderr.print("Coult not add path: {s} to bundler: {s}\n", .{ full_path, @errorName(err) }) catch {};
                 return;
